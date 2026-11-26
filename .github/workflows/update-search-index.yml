@@ -6,7 +6,7 @@ name: Update search index
 
 on:
   schedule:
-    - cron: '23 1,7,13,19 * * *'   # 4 runs a day at minute 23 (not on the hour)
+    - cron: '37 1,7,13,19 * * *'   # 4 runs a day at minute 37 (not on the hour)
   workflow_dispatch: {}            # manual "Run workflow" button
 
 concurrency:

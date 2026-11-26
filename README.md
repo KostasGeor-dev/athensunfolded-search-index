@@ -15,7 +15,7 @@ It is built **only from public pages** of the website and contains **words, not 
 | `index.html`, `.nojekyll` | placeholder page (`noindex`) and Pages setting |
 
 ## How it is refreshed
-`.github/workflows/update-search-index.yml` runs every six hours (minute 23 of 01, 07, 13, 19 UTC) and on demand (*Actions → Update search index → Run workflow*).
+`.github/workflows/update-search-index.yml` runs every six hours (minute 37 of 01, 07, 13, 19 UTC) and on demand (*Actions → Update search index → Run workflow*).
 Scheduled runs are **best effort**: GitHub may delay or skip them. Steps: self-tests on synthetic data → polite crawl (1.5 s between requests) → completeness check (published articles = indexed articles) → commit. If any step fails nothing is committed, so the **last good index stays published**; GitHub emails the repository owner about the failed run.
 
 Safety gates in `builder/build_index.js`: every published article must be readable; inventory must equal index; a sudden drop of more than max(2, 20 %) of the articles is rejected; size limit 8 MB; every article must be findable by its own title. Exit codes: 0 ok/unchanged, 2 rejected, 3 blocked or unreachable.
