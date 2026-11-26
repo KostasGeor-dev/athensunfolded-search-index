@@ -1,0 +1,67 @@
+# Rebuilds the public search index of www.athensunfolded.com from PUBLIC pages only.
+# - Scheduled runs are BEST-EFFORT: GitHub may delay or (rarely) skip them. Target interval: 6 hours.
+# - A failed build (exit 2 rejected / exit 3 blocked) stops the job BEFORE the commit step, so the last good index stays published.
+# - No secrets are used; the only credential is the job's own short-lived GITHUB_TOKEN (contents: write to push the index).
+name: Update search index
+
+on:
+  schedule:
+    - cron: '23 1,7,13,19 * * *'   # 4 runs a day at minute 23 (not on the hour)
+  workflow_dispatch: {}            # manual "Run workflow" button
+
+concurrency:
+  group: search-index
+  cancel-in-progress: false
+
+permissions: {}                    # default: nothing; the job asks for exactly what it needs
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write              # commit the new index
+      pages: write                 # best-effort "request a Pages build" call after the push
+    env:
+      SITE: https://www.athensunfolded.com
+    steps:
+      - name: Check out (first-party action, pinned to a commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Tool versions
+        run: |
+          node --version
+          node -e "if (+process.versions.node.split('.')[0] < 18) { console.error('Node 18+ required'); process.exit(1); }"
+
+      - name: Self-tests on synthetic data (no network)
+        run: npm test
+
+      - name: Build the index (public pages only, 1.5 s between requests)
+        run: node builder/build_index.js --base "$SITE" --out docs --pace 1500
+
+      - name: Verify completeness (published articles = indexed articles)
+        run: node builder/check_index.js --base "$SITE" --index docs --max-age-hours 2 --pace 1500
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Search index"
+            if [ -f docs/manifest.json ]; then node -e "const m=require('./docs/manifest.json');console.log('- articles: **'+m.articles+'**, terms: '+m.terms+', index: '+m.gzBytes+' bytes gzip\n- generation: '+m.generation+'\n- verified: '+m.verifiedAt)"; fi
+            if [ -f docs/last-build-failed.json ]; then echo "- **last failure:** \`$(node -e "const f=require('./docs/last-build-failed.json');console.log((f.reason||f.error||'see log').toString().slice(0,300))")\`"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit the new index (reached only when build and verification passed)
+        run: |
+          git config user.name  "search-index-bot"
+          git config user.email "search-index-bot@users.noreply.github.com"
+          git add -A docs
+          if git diff --cached --quiet; then echo "nothing to commit"; else git commit -m "Search index $(date -u +%Y-%m-%dT%H:%MZ)"; git push; fi
+
+      - name: Ask Pages to publish now (best effort; Pages also builds on push by itself)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${GITHUB_REPOSITORY}/pages/builds"

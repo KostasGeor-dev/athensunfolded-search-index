@@ -1,0 +1,30 @@
+'use strict';
+// Local mock of the Systeme.io public blog endpoints (same shapes as the real site) for pipeline and browser tests.
+const http = require('http'); const { CATS } = require('./mockdata');
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function createMock(ds, opts) {
+  opts = opts || {}; const S = { arts: ds.arts.map(a => ({ ...a })), hidden: new Set(), ctl: { wafAfter: Infinity, listing500At: 0, fail500: new Set(), hideListing: new Set(), hideSitemap: new Set(), dupSearch: false, feedMax: 20, serveCount: 0, searchDelay: 0 }, log: [] };
+  const live = () => S.arts.filter(a => !S.hidden.has(a.id)); const imgObj = a => a.img ? { id: a.id + 1, path: a.img, name: 'i', filename: 'i', thumbnail: a.img.replace('/img', '/thumb_150') } : null;
+  const searchRow = a => ({ id: a.id, type: 'post', path: a.slug, name: a.title, description: a.desc, content: 'NEXT STORY →', publication_date: new Date(a.ts).toISOString().replace('.000Z', '+00:00'), image: imgObj(a) });
+  const PAGES = ['/', '/posts', '/contact', '/about', '/collection', '/privacy-policy'].map((p, i) => ({ id: 100 + i, type: 'page', path: p, name: 'Page ' + p, description: '', content: '', publication_date: '2026-01-01T00:00:00+00:00', image: null }));
+  const listingHtml = (arts, pages, cur) => { const posts = arts.map(a => ({ id: a.id, name: a.title, dateTs: Math.floor(a.ts / 1000), description: a.desc, image: a.img, path: a.slug, categories: [{ name: a.cat.name, path: a.cat.slug }] })); const inner = JSON.stringify({ posts, pagination: { total: pages, current: cur } }); return '<html><head><title>Journal</title></head><body><script>window.__PRELOADED_STATE__={"blog":{"blogPostListing":' + JSON.stringify(inner).replace(/</g, '\\x3c') + '}}</script></body></html>'; };
+  const server = http.createServer((q, r) => {
+    const u = new URL(q.url, 'http://x'); S.ctl.serveCount++; S.log.push(u.pathname + u.search); const send = (st, body, ct, h) => { r.writeHead(st, { 'Content-Type': ct || 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*', ...(h || {}) }); r.end(body); };
+    if (S.ctl.serveCount > S.ctl.wafAfter) return send(403, 'blocked');
+    if (S.ctl.fail500.has(u.pathname)) return send(500, 'boom');
+    const p = u.pathname; const pg = +u.searchParams.get('page') || 1;
+    if (p === '/blog-search') { const go = () => { const limit = +u.searchParams.get('limit') || 10; if (limit > 50) return send(400, '{"error":"limit"}', 'application/json'); const query = (u.searchParams.get('query') || '').toLowerCase(); let rows = live().slice().sort((a, b) => a.ts - b.ts).map(searchRow).concat(PAGES).filter(x => !query || (x.name + ' ' + x.description).toLowerCase().includes(query)); if (S.ctl.dupSearch && rows.length) rows = rows.concat([rows[0]]); send(200, JSON.stringify({ data: rows.slice((pg - 1) * limit, pg * limit), total: rows.length, page: pg }), 'application/json'); }; return S.ctl.searchDelay ? setTimeout(go, S.ctl.searchDelay) : go(); }
+    if (p === '/sitemap.xml') return send(200, '<?xml version="1.0"?><sitemapindex><sitemap><loc>http://' + q.headers.host + '/sitemaps/blog/1/sitemap.xml</loc></sitemap><sitemap><loc>http://' + q.headers.host + '/sitemaps/funnel/2/sitemap.xml</loc></sitemap></sitemapindex>', 'text/xml');
+    if (p === '/sitemaps/blog/1/sitemap.xml') return send(200, '<?xml version="1.0"?><urlset>' + ['/', '/posts', '/contact', '/about', '/collection'].concat(live().filter(a => !S.ctl.hideSitemap.has(a.id)).map(a => a.slug)).map(x => '<url><loc>http://' + q.headers.host + x + '</loc><lastmod>2026-11-25</lastmod></url>').join('') + '</urlset>', 'text/xml');
+    if (p === '/sitemaps/funnel/2/sitemap.xml') return send(200, '<urlset><url><loc>http://' + q.headers.host + '/first24</loc></url></urlset>', 'text/xml');
+    if (p === '/feed') return send(200, '<?xml version="1.0"?><rss><channel>' + live().slice().sort((a, b) => b.ts - a.ts).slice(0, S.ctl.feedMax).map(a => '<item><title>' + esc(a.title) + '</title><link>http://' + q.headers.host + a.slug + '</link><description>' + esc(a.desc) + '</description><pubDate>' + new Date(a.ts).toUTCString() + '</pubDate></item>').join('') + '</channel></rss>', 'application/rss+xml');
+    const lm = p === '/posts' ? { slug: null } : p.match(/^\/category\/([a-z-]+)$/) ? { slug: RegExp.$1 } : null;
+    if (lm) { if (S.ctl.listing500At && pg >= S.ctl.listing500At) return send(500, 'boom'); let rows = live().filter(a => !S.ctl.hideListing.has(a.id) && (!lm.slug || a.cat.slug === lm.slug)).sort((a, b) => b.ts - a.ts); const pages = Math.max(1, Math.ceil(rows.length / 6)); if (pg > pages) return send(403, 'blocked'); return send(200, listingHtml(rows.slice((pg - 1) * 6, pg * 6), pages, pg)); }
+    const a = live().find(x => x.slug === p);
+    if (a) { const body = a.secs.map(s => (s.h ? '<h2>' + esc(s.h) + '</h2>' : '') + s.paras.map(t => '<p>' + esc(t) + '</p>').join('')).join('\n'); return send(200, '<!doctype html><html><head><title>' + esc(a.title) + ' | Athens Unfolded</title><meta name="description" content="' + esc(a.desc) + '"><link rel="canonical" href="http://' + q.headers.host + a.slug + '"></head><body><nav><a href="/">Home navigation words</a></nav><main><div class="jn-prose">' + body + '<aside class="jn-ctx"><p>' + esc(a.cta) + '</p></aside></div></main><footer>Cookiebot footer words</footer></body></html>'); }
+    return send(404, '<html><title>404 Error page</title></html>');
+  });
+  const ops = { publish: a => { S.arts.push({ ...a }); }, unpublish: id => S.hidden.add(id), republish: id => S.hidden.delete(id), remove: id => { S.arts = S.arts.filter(a => a.id !== id); }, update: (id, fn) => fn(S.arts.find(a => a.id === id)), move: (id, slug) => { S.arts.find(a => a.id === id).slug = slug; }, get: id => S.arts.find(a => a.id === id) };
+  return { server, S, ops, listen: () => new Promise(res => server.listen(0, '127.0.0.1', () => res('http://127.0.0.1:' + server.address().port))), close: () => new Promise(res => server.close(res)) };
+}
+module.exports = { createMock };

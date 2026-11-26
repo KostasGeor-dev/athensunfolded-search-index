@@ -1,0 +1,13 @@
+{
+  "name": "athensunfolded-search-index",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Public, machine-readable full-text search index for the Athens Unfolded blog (built from public pages only).",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "node builder/build_index.js --base https://www.athensunfolded.com --out docs --pace 1500",
+    "check": "node builder/check_index.js --base https://www.athensunfolded.com --index docs --max-age-hours 36 --pace 1500",
+    "test": "node tests/lifecycle.js && node tests/check_index_test.js && node tests/heartbeat.js"
+  }
+}

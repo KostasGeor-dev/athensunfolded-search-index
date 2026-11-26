@@ -1,0 +1,9 @@
+# local test output and build by-products are never published
+qa/
+node_modules/
+docs/history/
+docs/build-report.json
+docs/build-log.ndjson
+docs/last-build-failed.json
+docs/systeme-page-block.html
+docs/.tmp-*
